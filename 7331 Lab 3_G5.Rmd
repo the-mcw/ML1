@@ -1,6 +1,6 @@
 ---
 title: "7331 Lab 3"
-author: "Krithika Kondakindi, Christopher Williams, Jason Yoon"
+author: "Group 5: Krithika Kondakindi, Christopher Williams, Jason Yoon"
 date: "2023-08-08"
 output:
   html_document:
@@ -12,6 +12,10 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(arules)
 library(arulesViz)
+library(GGally)
+library(ggthemes)
+library(plotly)
+
 ```
 
 ```{r}
@@ -25,7 +29,8 @@ rm_drivers = drivers %>%
   group_by(driverId, year) %>%
   mutate(nextFinish = lead(positionOrder)) %>%
   ungroup() %>%
-  select(-c(positionOrder,year))
+  select(-c(positionOrder,year)) %>%
+  filter(!is.na(nextFinish))
 
 rm_drivers = rm_drivers %>%
   rename(nextQualify = qualifyPosition) %>%
@@ -36,26 +41,77 @@ rm_drivers = rm_drivers %>%
 
 rm_drivers = rm_drivers %>%
   mutate(pointsBin = cut(points_Race, c(0,1,15,26),
-                       labels = c("no points", "midfield", "podium"),
+                       labels = c("No Points", "1-14", "15-26"),
                        include.lowest = T, right = F),
          conBin = cut(conPoints_Race, c(0,1,15,44),
-                      labels = c("no points", "midfield", "podium"),
+                      labels = c("No Points", "1-14", "15-44"),
                       include.lowest = T, right = F),
-         rankBin = if_else(rank==0,"no points",
+         rankBin = if_else(rank==0,"DNQ",
                            cut(rank, 4, labels = c("Q1", "Q2","Q3", "Q4"),
                                #c(1,3,10,24), labels = c("podium", "midfield", "no points"),
                                include.lowest = T)),
-         nextQualBin = cut(nextQualify,c(1,4,8,14,24), labels = c("1-4", "5-8", "9-14","back"),
+         nextQualBin = cut(nextQualify,c(1,4,8,14,24), labels = c("1-4", "5-8", "9-14","15-24"),
                         include.lowest = T),
          nextFinBin = cut(nextFinish, c(1,3,10,24), labels = c("podium", "midfield", "no points"),
                           include.lowest = T))
 
 rm_model_drivers = rm_drivers %>%
   select(ends_with("Bin")) %>%
-  mutate(rankBin = factor(rankBin))
+  mutate(rankBin = factor(rankBin, levels = c("Q1", "Q2", "Q3", "Q4", "DNQ")),
+         pointsBin = factor(pointsBin, levels = c("15-26", "1-14", "No Points")),
+         conBin = factor(conBin, levels = c("15-44", "1-14", "No Points")))
 ```
 
-## Podium Finishes
+## Business Understanding
+
+For Lab 3, we used the Formula 1 dataset. This dataset was collected to help users conduct analyses on both Constructor and Driver performance, and to understand different relationships and patterns between the variables.
+
+We are using associate rule mining to find connections and relations between the variables. To test the effectiveness of the model, we will look at Support, Confidence, Coverage, and Lift. Support measures the frequency in which the itemset/rule appears in the dataset. Higher support indicates that the rule is relevant. Confidence shows how often the outcome/RHS occurs when the condition/LHS is present. High confidence suggests a strong relation between the condition and the outcome. Formula 1 Teams and pundits can use these algorithms and rules to optimize their qualifying strategies or recognize patterns that influence performance.
+
+## Data Understanding
+
+The dataset used for this project has 5 variables. PointsBin shows the total points each driver earned at the end of the current race. ConBin shows the standing of the constructor/team after the current race. RankBin shows the rank of the fastest lap of each driver in the current race. NextQualBin shows the qualifying position for each driver in the subsequent race, and NextFinBin shows the finishing position of each driver in the subsequent race. We reclassified all the variables into discreet variables to perform the Association Rule Mining. Additionally, we removed any N/As for NextFinish before reclassifying the variable. These N/As were not a mistakes. In instances where we are looking at the last race of the season, there is no information available for the "Next" race.
+
+```{r}
+ggally_count(rm_model_drivers, aes(x = rankBin, y = nextQualBin, fill = nextFinBin)) +
+  scale_fill_solarized() +
+  labs(title = "Previous Fastest Lap vs Qualifying Position",
+       x = "Fastest Lap Rank in Previous Race",
+       y = "Race Qualifying Position",
+       fill = "Race Finish")
+```
+Interpretation: 
+
+This chart is displaying the distribution of Race Finish Position when comparing Race Qualifying Position and Fastest Lap in the previous race. Although driver's fastest lap times in the previous race have an association with their finishing position in the race, the chart shows that where a driver qualifies for the race has a slightly stronger influence on their final result. 
+
+
+```{r}
+ggally_count(rm_model_drivers, aes(x = pointsBin, y = conBin, fill = nextFinBin)) +
+  scale_fill_solarized() +
+  labs(title = "Racer vs Constructor Points per Race",
+       x = "Racer's Points per Race",
+       y = "Constructor's Points per Race",
+       fill = "Race Finish")
+```
+
+Interpretation: 
+
+This chart is displaying the distribution of Race Finish Positions when comparing the Driver's Points to the Constructor's standings after the previous race. It shows that a Driver's performance has a stronger association with their race outcome than their Constructor's performance.
+
+```{r}
+ggally_count(rm_model_drivers, aes(x = nextQualBin, y = conBin, fill = nextFinBin)) +
+  scale_fill_solarized() +
+  labs(title = "Qualifying Position vs Constructor Points",
+       x = "Race Qualifying Position",
+       y = "Constructor Points per Race",
+       fill = "Race Finish")
+```
+Interpretation:
+
+When compared to the Constructors Points of the previous race, the Race Qualifying Position has a stronger association to the Race Finish Position.
+
+## Modeling and Evaluation
+### Podium Finishes
 Find Associations
 ```{r, results='hide'}
 rm_podium = apriori(rm_model_drivers,
@@ -70,8 +126,24 @@ knitr::kable(DATAFRAME(rm_podium,
              "pipe")
 ```
 
+Interpretation: 
 
-## Non-Podium Point Finishes
+The association rule mining results shown above indicate that strong performances by drivers and constructors in the previous race, combined with top qualifying positions, were strongly associated with drivers obtaining podium finishes. It appears to be uncommon for drivers to over-deliver after weaker performances in previous races or poor qualifying performances. 
+
+Itemset containing pointsBin of 15-26 and nextQualBin of 1-4 (Strong Qualifying Positions) has a strong confidence of 78.3% and is supported by 6.1% of the data. Confidence of 78.3% indicates that when the condition of pointsBin=15-26 | nextQualBin=1-4 is present, theres a 78.3% chance that the outcome is a Podium finish. 
+
+The itemset of pointsBin being 15-26, nextQualBin being 1-4, and conBin being 15-44 also shows a Confidence of 78.3%, a Support of 6.1%, and a count of 206 in influencing a Podium outcome. This suggests that whenever a driver's points fall within the range of 15-26 and their nextQualBin is 1-4, the conBin is consistently in the 15-44 range.
+
+
+```{r}
+plot_podium <- plot(rm_podium, engine = "plotly")
+plot_podium <- layout(plot_podium, title = "Association Rule Mining Results for Podium Finishes")
+plot_podium
+```
+
+The Interactive scatterplot above shows Confidence, Support, Lift for each itemset/rule for Podium Finishes. We can see that as Confidence is increasing, so is Lift. This suggests that when the rule's Confidence is higher, the likelihood of observing the RHS when LHS is present is also higher. However, as Support increases, there is not visible change in Lift. Higher support and lower lift indicates that the co-occurrence of the condition and the outcome is more coincidental and does not indicate a strong relationship. For example, for itemset #6, the low lift of 4.19 suggests that the co-occurrence of conBin=15-44 and nextQualBin=1-4 together is only 4.19 times higher than those two attributes appearing alone, which when compared to other itemsets, doesn't indicate a strong influence on the outcome.
+
+### Non-Podium Point Finishes
 ```{r, results='hide'}
 rm_midfield = apriori(rm_model_drivers,
                    parameter = list(support = 0.075, confidence = 0.4, minlen = 2),
@@ -85,5 +157,23 @@ knitr::kable(DATAFRAME(rm_midfield,
              "pipe")
 ```
 
+Interpretation:
 
+The association rule mining results above show that itemset with pointsBin of 1-14 and nextQualBin of 5-8 has a strong association to a Midfield finish with Confidence of 63.5% and Support of 10.7%. This suggests that moderate points and a relatively favorable qualifying position can increase a driver's likelihood of finishing in the Midfield. 
+
+The itemset pointsBin of 1-14, conBin of 1-14, and nextQualBin of 9-14 suggests that, even with a weaker qualifying performance, moderate performance by both driver and constructor in the previous race indicate that a driver has the potential of finishing in the Midfield. This is supported by Confidence of 50% and Support of 9%.
+
+
+```{r}
+plot_midfield <- plot(rm_midfield, engine = "plotly")
+plot_midfield <- layout(plot_midfield, title = "Association Rule Mining Results for Midfield Finishes")
+plot_midfield
+```
+
+
+Similar to the Interactive scatterplot for Podiums, the scatterplot for Midfield also shows that an increase in Confidence corresponds to an increase in Lift. In this plot, we also observe instances where, as Support increases, Confidence remains low. This observation suggests that although an association between two occurrences exists, the strength of the prediction is not substantial. This scenario may arise when numerous instances of the condition/antecedent are present, but the outcome is not consistently predictable. An example of this instance is represented by LHS/itemset #13, where pointsBin = 1-14 and conBin = 1-14, with a corresponding RHS/outcome of Midfield. The itemset likely appears frequently in the dataset, but the outcome is not always a Midfield finishing position.
+
+## Deployment
+
+Journalists and broadcasters can utilize the model's insights to make more informed, data-driven race predictions. For deployment, an API or prediction service can be used, allowing users to input data for on-demand predictions. Regular data collection after each race is essential due to evolving car regulations and race rules that can affect/alter any associations between the variables. Additional information like weather conditions can shed light on whether specific drivers/constructors will perform better or worse in mixed or wet conditions.
 
